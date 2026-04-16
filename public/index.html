@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI-ToDo</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230d9488'/%3E%3Cpath d='M18 32l8 8 20-20' fill='none' stroke='white' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles/main.css?v=24">
+  <link rel="stylesheet" href="/styles/main.css?v=28">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js"></script>
 </head>
 <body>
@@ -25,6 +25,37 @@
     </header>
 
     <section class="calendar-shell">
+      <section id="emptyGuide" class="empty-guide hidden" aria-live="polite">
+        <div class="empty-guide-copy">
+          <div class="empty-guide-label">Desktop demo flow</div>
+          <h2>Start with a calendar range, then let AI turn it into a draft you can review before anything lands on the schedule.</h2>
+          <p class="muted-text">This demo works best when the calendar stays readable. Select a window, send one clear prompt, then check the proposed titles, notes, and timing before you apply the plan.</p>
+        </div>
+        <div class="empty-guide-steps" aria-label="Getting started steps">
+          <div class="empty-guide-step">
+            <div class="empty-guide-step-number">1</div>
+            <div>
+              <strong>Select a time range</strong>
+              <p class="muted-text">Drag across the calendar to choose the window you want the plan to fit.</p>
+            </div>
+          </div>
+          <div class="empty-guide-step">
+            <div class="empty-guide-step-number">2</div>
+            <div>
+              <strong>Describe the bigger goal</strong>
+              <p class="muted-text">Ask for concrete tasks with realistic wording and readable titles.</p>
+            </div>
+          </div>
+          <div class="empty-guide-step">
+            <div class="empty-guide-step-number">3</div>
+            <div>
+              <strong>Review the draft before apply</strong>
+              <p class="muted-text">Check timing, clarity, and visual density before placing tasks on the calendar.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div id="calendar"></div>
 
       <section id="selectionBar" class="selection-bar hidden" aria-live="polite">
@@ -95,17 +126,21 @@
 
       <section id="executeModePanel" class="mode-panel hidden">
         <div class="draft-header">
-          <div>
-            <h3>Draft events</h3>
-            <p class="muted-text">Review the AI draft before placing it on the calendar.</p>
+          <div class="draft-header-copy">
+            <div class="draft-header-label">Execution step</div>
+            <h3>Review draft events before they touch the calendar</h3>
+            <p id="draftSummaryText" class="muted-text">Check titles, notes, and timing before you apply the draft.</p>
           </div>
-          <button id="applyDraftButton" type="button" class="primary-button" disabled>Apply to calendar</button>
+          <div class="draft-header-actions">
+            <div id="draftMetaChips" class="draft-meta-chips hidden"></div>
+            <button id="applyDraftButton" type="button" class="primary-button" disabled>Apply to calendar</button>
+          </div>
         </div>
         <div id="draftList" class="draft-list"></div>
       </section>
     </section>
   </div>
 
-  <script type="module" src="/app/main.js?v=24"></script>
+  <script type="module" src="/app/main.js?v=28"></script>
 </body>
 </html>

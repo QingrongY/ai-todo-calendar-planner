@@ -6,3 +6,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .DS_Store
+AIMLAPI_APIkey.txt
+*.Zone.Identifier
+*:Zone.Identifier
+proofshot-artifacts/

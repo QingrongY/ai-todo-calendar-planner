@@ -31,6 +31,7 @@ const elements = {
   healthDot: document.getElementById("healthDot"),
   healthText: document.getElementById("healthText"),
   plansButton: document.getElementById("plansButton"),
+  emptyGuide: document.getElementById("emptyGuide"),
   selectionBar: document.getElementById("selectionBar"),
   selectionLabel: document.getElementById("selectionLabel"),
   clearSelectionButton: document.getElementById("clearSelectionButton"),
@@ -57,6 +58,8 @@ const elements = {
   modalMicButton: document.getElementById("modalMicButton"),
   modalSendButton: document.getElementById("modalSendButton"),
   modalStatus: document.getElementById("modalStatus"),
+  draftSummaryText: document.getElementById("draftSummaryText"),
+  draftMetaChips: document.getElementById("draftMetaChips"),
   draftList: document.getElementById("draftList"),
   applyDraftButton: document.getElementById("applyDraftButton"),
   calendar: document.getElementById("calendar"),
@@ -94,6 +97,13 @@ function formatDateOnly(dateLike) {
     weekday: "short",
     month: "short",
     day: "numeric",
+  });
+}
+
+function formatTimeOnly(dateLike) {
+  return new Date(dateLike).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
   });
 }
 
@@ -147,6 +157,50 @@ function minutesToTime(totalMinutes) {
   const hours = String(Math.floor(safe / 60)).padStart(2, "0");
   const minutes = String(safe % 60).padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function formatTaskPlacement(task) {
+  if (!task?.targetDate) {
+    return "Timing to be decided";
+  }
+
+  if (!Number.isFinite(task.targetStartMinutes)) {
+    return formatDateOnly(`${task.targetDate}T12:00:00`);
+  }
+
+  const start = new Date(`${task.targetDate}T${minutesToTime(task.targetStartMinutes)}:00`);
+  return `${formatDateOnly(start)} at ${formatTimeOnly(start)}`;
+}
+
+function isOffHoursTask(task) {
+  return Number.isFinite(task?.targetStartMinutes)
+    && (task.targetStartMinutes < (6 * 60) || task.targetStartMinutes >= (23 * 60));
+}
+
+function isOffHoursEvent(eventLike) {
+  if (eventLike?.allDay || !eventLike?.start) {
+    return false;
+  }
+
+  const start = new Date(eventLike.start);
+  return start.getHours() < 6 || start.getHours() >= 23;
+}
+
+function formatEventTimeLabel(eventLike) {
+  if (eventLike?.allDay) {
+    return "All day";
+  }
+
+  if (!eventLike?.start) {
+    return "";
+  }
+
+  const start = formatTimeOnly(eventLike.start);
+  if (!eventLike?.end) {
+    return start;
+  }
+
+  return `${start} to ${formatTimeOnly(eventLike.end)}`;
 }
 
 function getDateKeysInRange(startDateLike, endDateLike, inclusive = true) {
@@ -398,6 +452,11 @@ function renderHealth(ready, label) {
   elements.healthDot.className = `status-dot ${ready ? "ready" : "error"}`;
 }
 
+function renderEmptyGuide() {
+  const shouldShow = !state.sessions.length && !state.events.length;
+  elements.emptyGuide.classList.toggle("hidden", !shouldShow);
+}
+
 async function loadHealth() {
   try {
     const response = await fetch("/api/health");
@@ -427,6 +486,7 @@ function setModalOpen(isOpen) {
   elements.aiModal.classList.toggle("hidden", !isOpen);
   elements.aiModal.setAttribute("aria-hidden", String(!isOpen));
   document.body.classList.toggle("modal-open", isOpen);
+  renderSelectionBar();
 }
 
 function setModalMode(mode) {
@@ -479,7 +539,8 @@ function ensureSessionForSelection() {
 
 function renderSelectionBar() {
   const hasSelection = Boolean(state.selectedWindow);
-  elements.selectionBar.classList.toggle("hidden", !hasSelection);
+  const shouldShow = hasSelection && !state.modalOpen;
+  elements.selectionBar.classList.toggle("hidden", !shouldShow);
   if (state.calendar) {
     requestAnimationFrame(() => state.calendar.updateSize());
   }
@@ -494,11 +555,17 @@ function syncCalendarEvents() {
     return;
   }
 
+  renderEmptyGuide();
+
   state.calendar.batchRendering(() => {
     state.calendar.removeAllEvents();
     state.events.forEach((eventRecord) => {
       state.calendar.addEvent(eventRecord);
     });
+  });
+
+  requestAnimationFrame(() => {
+    state.calendar.updateSize();
   });
 }
 
@@ -530,14 +597,24 @@ function renderEventDetails() {
   label.className = "detail-label";
   label.textContent = eventRecord.allDay ? "All-day event" : "Scheduled event";
 
+  const title = document.createElement("div");
+  title.className = "detail-title";
+  title.textContent = eventRecord.title;
+
   const main = document.createElement("div");
   main.className = "detail-main";
   main.textContent = eventRecord.allDay
-    ? `${eventRecord.title}\n${formatDateOnly(eventRecord.start)}`
-    : `${eventRecord.title}\n${formatDateTime(eventRecord.start)} - ${formatDateTime(eventRecord.end)}`;
+    ? formatDateOnly(eventRecord.start)
+    : `${formatDateTime(eventRecord.start)} - ${formatDateTime(eventRecord.end)}`;
+
+  const notesPreview = document.createElement("div");
+  notesPreview.className = "detail-notes";
+  notesPreview.textContent = eventRecord.extendedProps?.notes || "No notes yet.";
 
   card.appendChild(label);
+  card.appendChild(title);
   card.appendChild(main);
+  card.appendChild(notesPreview);
   elements.eventDetailsContent.appendChild(card);
 
   const form = document.createElement("div");
@@ -595,7 +672,7 @@ function renderEventDetails() {
     const continueButton = document.createElement("button");
     continueButton.type = "button";
     continueButton.className = "primary-button";
-    continueButton.textContent = "Continue in AI";
+    continueButton.textContent = "Open AI conversation";
     continueButton.addEventListener("click", () => {
       setEventDrawerOpen(false);
       continueInSession(sessionId, { mode: "plan" });
@@ -628,6 +705,7 @@ function renderEventDetails() {
 }
 
 function renderPlansDrawer() {
+  renderEmptyGuide();
   elements.plansList.innerHTML = "";
   if (!state.sessions.length) {
     const empty = document.createElement("div");
@@ -734,10 +812,39 @@ function renderModalMessages() {
 
 function renderDraftList() {
   const session = getActiveSession();
-  elements.draftList.innerHTML = "";
-  elements.applyDraftButton.disabled = !session || !session.draftTasks || !session.draftTasks.length;
+  const tasks = session?.draftTasks || [];
+  const totalMinutes = tasks.reduce((sum, task) => sum + (Number(task.estimateMinutes) || 0), 0);
+  const offHoursCount = tasks.filter(isOffHoursTask).length;
 
-  if (!session || !session.draftTasks?.length) {
+  elements.draftList.innerHTML = "";
+  elements.applyDraftButton.disabled = !tasks.length;
+
+  elements.draftSummaryText.textContent = tasks.length
+    ? `${tasks.length} draft events totaling ${formatDurationMinutes(totalMinutes)}. Review timing and clarity before you apply them.`
+    : "Check titles, notes, and timing before you apply the draft.";
+
+  elements.draftMetaChips.innerHTML = "";
+  elements.draftMetaChips.classList.toggle("hidden", !tasks.length);
+
+  if (tasks.length) {
+    const metaLabels = [
+      `${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
+      `${formatDurationMinutes(totalMinutes)} total`,
+    ];
+
+    if (offHoursCount) {
+      metaLabels.push(`${offHoursCount} outside visible hours`);
+    }
+
+    metaLabels.forEach((label) => {
+      const chip = document.createElement("div");
+      chip.className = `draft-summary-chip${label.includes("outside visible hours") ? " warning" : ""}`;
+      chip.textContent = label;
+      elements.draftMetaChips.appendChild(chip);
+    });
+  }
+
+  if (!session || !tasks.length) {
     const empty = document.createElement("div");
     empty.className = "empty-card";
     empty.textContent = "Send a prompt in Plan Mode to get an AI draft.";
@@ -745,13 +852,17 @@ function renderDraftList() {
     return;
   }
 
-  session.draftTasks.forEach((task) => {
+  tasks.forEach((task) => {
     const card = document.createElement("div");
     card.className = "draft-card";
 
     const title = document.createElement("div");
     title.className = "draft-card-title";
     title.textContent = task.text;
+
+    const schedule = document.createElement("div");
+    schedule.className = `draft-card-schedule${isOffHoursTask(task) ? " warning" : ""}`;
+    schedule.textContent = formatTaskPlacement(task);
 
     const notes = document.createElement("div");
     notes.className = "draft-card-notes";
@@ -769,6 +880,7 @@ function renderDraftList() {
     meta.appendChild(priority);
 
     card.appendChild(title);
+    card.appendChild(schedule);
     card.appendChild(notes);
     card.appendChild(meta);
     elements.draftList.appendChild(card);
@@ -778,14 +890,17 @@ function renderDraftList() {
 function renderCalendarEventContent(arg) {
   const sessionColor = getSessionColor(resolveSessionIdForEvent(arg.event));
   const wrapper = document.createElement("div");
-  wrapper.className = `fc-custom-event priority-${arg.event.extendedProps.priority || "medium"}`;
+  wrapper.className = `fc-custom-event priority-${arg.event.extendedProps.priority || "medium"}${isOffHoursEvent(arg.event) ? " off-hours" : ""}`;
   wrapper.style.setProperty("--session-bg", sessionColor.bg);
   wrapper.style.setProperty("--session-soft", sessionColor.soft);
   wrapper.style.setProperty("--session-border", sessionColor.border);
   wrapper.style.setProperty("--session-text", sessionColor.text);
+  wrapper.title = `${arg.event.title || "Untitled"}\n${formatEventTimeLabel(arg.event)}`;
+
   const titleNode = document.createElement("div");
   titleNode.className = "fc-custom-event-title";
   titleNode.textContent = arg.event.title || "Untitled";
+
   wrapper.appendChild(titleNode);
   return { domNodes: [wrapper] };
 }
@@ -1012,12 +1127,12 @@ function initializeCalendar() {
     windowResizeDelay: 50,
     slotDuration: "01:00:00",
     slotLabelInterval: "01:00:00",
-    eventMinHeight: 18,
+    eventMinHeight: 34,
     scrollTime: "08:00:00",
     scrollTimeReset: false,
     slotMinTime: "06:00:00",
     slotMaxTime: "23:00:00",
-    events: state.events,
+    events: [],
     eventContent: renderCalendarEventContent,
     select: (info) => {
       state.selectedWindow = {
@@ -1036,13 +1151,6 @@ function initializeCalendar() {
     },
     eventClick: (info) => {
       info.jsEvent.preventDefault();
-      const sessionId = resolveSessionIdForEvent(info.event);
-      if (sessionId) {
-        state.selectedEventId = info.event.id;
-        setEventDrawerOpen(false);
-        continueInSession(sessionId, { mode: "plan" });
-        return;
-      }
       state.selectedEventId = info.event.id;
       state.selectedWindow = null;
       renderSelectionBar();
@@ -1246,6 +1354,7 @@ loadState();
 sortSessions();
 hydrateEventSessionLinks();
 loadHealth();
+renderEmptyGuide();
 renderSelectionBar();
 renderEventDetails();
 renderPlansDrawer();
