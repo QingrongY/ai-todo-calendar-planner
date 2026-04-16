@@ -1,3 +1,14 @@
+import {
+  createId,
+  addDays,
+  toDateKey,
+  minutesToTime,
+  getDateKeysInRange,
+  buildTimedSegments,
+  buildSelectionSegments,
+  scheduleAcrossSegments,
+} from "./scheduler.js";
+
 const STORAGE_KEY = "aitodo-fullcalendar-v2";
 
 const state = {
@@ -65,10 +76,6 @@ const elements = {
   calendar: document.getElementById("calendar"),
 };
 
-function createId() {
-  return crypto.randomUUID();
-}
-
 function getSessionColor(sessionId) {
   if (!sessionId) {
     return SESSION_COLORS[0];
@@ -130,33 +137,12 @@ function formatDurationMinutes(minutes) {
   return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 }
 
-function addDays(date, days) {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-}
-
-function toDateKey(dateLike) {
-  const date = new Date(dateLike);
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
 function timeToMinutes(timeString) {
   if (!timeString) {
     return null;
   }
   const [hours, minutes] = String(timeString).split(":").map(Number);
   return hours * 60 + minutes;
-}
-
-function minutesToTime(totalMinutes) {
-  const safe = Math.max(0, Math.min(1439, Math.round(totalMinutes)));
-  const hours = String(Math.floor(safe / 60)).padStart(2, "0");
-  const minutes = String(safe % 60).padStart(2, "0");
-  return `${hours}:${minutes}`;
 }
 
 function formatTaskPlacement(task) {
@@ -203,166 +189,15 @@ function formatEventTimeLabel(eventLike) {
   return `${start} to ${formatTimeOnly(eventLike.end)}`;
 }
 
-function getDateKeysInRange(startDateLike, endDateLike, inclusive = true) {
-  const keys = [];
-  const start = new Date(startDateLike);
-  const end = new Date(endDateLike);
-  let cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-  while (cursor < last || (inclusive && cursor.getTime() === last.getTime())) {
-    keys.push(toDateKey(cursor));
-    cursor = addDays(cursor, 1);
-  }
-  return keys;
-}
-
-function buildTimedSegments(selection) {
-  const start = new Date(selection.start);
-  const end = new Date(selection.end);
-  const startKey = toDateKey(start);
-  const endKey = toDateKey(end);
-  const keys = getDateKeysInRange(start, end);
-
-  return keys
-    .map((dateKey, index) => {
-      let startMinutes = 0;
-      let endMinutes = 24 * 60;
-
-      if (dateKey === startKey) {
-        startMinutes = start.getHours() * 60 + start.getMinutes();
-      }
-      if (dateKey === endKey) {
-        endMinutes = end.getHours() * 60 + end.getMinutes();
-        if (endMinutes === 0 && index > 0) {
-          endMinutes = 24 * 60;
-        }
-      }
-
-      return { dateKey, startMinutes, endMinutes };
-    })
-    .filter((segment) => segment.endMinutes > segment.startMinutes);
-}
-
-function buildSelectionSegments(selection) {
-  if (selection.allDay) {
-    const endDate = new Date(new Date(selection.end).getTime() - 86400000);
-    return getDateKeysInRange(selection.start, endDate).map((dateKey) => ({
-      dateKey,
-      startMinutes: 9 * 60,
-      endMinutes: 18 * 60,
-      availableMinutes: 9 * 60,
-    }));
-  }
-
-  return buildTimedSegments(selection).map((segment) => ({
-    ...segment,
-    availableMinutes: segment.endMinutes - segment.startMinutes,
-  }));
-}
-
-function scheduleAcrossSegments(tasks, segments, sessionId, color) {
-  const events = [];
-  const overflow = [];
-  const cursorMap = Object.fromEntries(segments.map((segment) => [segment.dateKey, segment.startMinutes]));
-  const blockMap = Object.fromEntries(segments.map((segment) => [segment.dateKey, []]));
-
-  function overlaps(dateKey, startMinutes, endMinutes) {
-    return blockMap[dateKey].some((block) => !(endMinutes <= block.startMinutes || startMinutes >= block.endMinutes));
-  }
-
-  function reserve(dateKey, startMinutes, endMinutes) {
-    blockMap[dateKey].push({ startMinutes, endMinutes });
-    blockMap[dateKey].sort((left, right) => left.startMinutes - right.startMinutes);
-  }
-
-  function nextFreeSlot(dateKey, durationMinutes) {
-    const segment = segments.find((item) => item.dateKey === dateKey);
-    if (!segment) {
-      return null;
-    }
-
-    let candidate = segment.startMinutes;
-    const blocks = blockMap[dateKey];
-    for (const block of blocks) {
-      if (candidate + durationMinutes <= block.startMinutes) {
-        break;
-      }
-      candidate = Math.max(candidate, block.endMinutes);
-    }
-
-    return candidate + durationMinutes <= segment.endMinutes ? candidate : null;
-  }
-
-  tasks.forEach((task, index) => {
-    const durationMinutes = Math.max(10, Math.min(240, Number(task.estimateMinutes) || 45));
-    const preferredDate = task.targetDate && cursorMap[task.targetDate] !== undefined ? task.targetDate : null;
-    const orderedSegments = preferredDate
-      ? [
-          segments.find((segment) => segment.dateKey === preferredDate),
-          ...segments.filter((segment) => segment.dateKey !== preferredDate),
-        ]
-      : segments;
-
-    let placed = false;
-    for (const segment of orderedSegments) {
-      if (!segment) {
-        continue;
-      }
-
-      const hasExplicitStart = preferredDate === segment.dateKey && Number.isFinite(task.targetStartMinutes);
-      let requestedStart = hasExplicitStart ? task.targetStartMinutes : cursorMap[segment.dateKey];
-      let eventEndMinutes = requestedStart + durationMinutes;
-
-      const explicitFits = hasExplicitStart
-        && requestedStart >= segment.startMinutes
-        && eventEndMinutes <= segment.endMinutes
-        && !overlaps(segment.dateKey, requestedStart, eventEndMinutes);
-
-      if (!explicitFits) {
-        const fallbackStart = nextFreeSlot(segment.dateKey, durationMinutes);
-        if (fallbackStart === null) {
-          continue;
-        }
-        requestedStart = fallbackStart;
-        eventEndMinutes = requestedStart + durationMinutes;
-      }
-
-      const start = new Date(`${segment.dateKey}T${minutesToTime(requestedStart)}:00`);
-      const end = new Date(`${segment.dateKey}T${minutesToTime(eventEndMinutes)}:00`);
-      events.push({
-        id: createId(),
-        title: task.text,
-        start: start.toISOString(),
-        end: end.toISOString(),
-        allDay: false,
-        editable: true,
-        groupId: sessionId,
-        backgroundColor: color.bg,
-        borderColor: color.bg,
-        textColor: "#ffffff",
-        extendedProps: {
-          notes: task.notes || "",
-          priority: task.priority || "medium",
-          estimateMinutes: durationMinutes,
-          sessionId,
-          aiGenerated: true,
-          segmentIndex: index,
-          targetDate: segment.dateKey,
-          targetStartMinutes: requestedStart,
-        },
-      });
-      reserve(segment.dateKey, requestedStart, eventEndMinutes);
-      cursorMap[segment.dateKey] = Math.max(cursorMap[segment.dateKey], eventEndMinutes);
-      placed = true;
-      break;
-    }
-
-    if (!placed) {
-      overflow.push(task);
-    }
-  });
-
-  return { events, overflow };
+function showToast(message, durationMs = 2500) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.remove("hidden");
+  requestAnimationFrame(() => toast.classList.add("visible"));
+  setTimeout(() => {
+    toast.classList.remove("visible");
+    setTimeout(() => toast.classList.add("hidden"), 260);
+  }, durationMs);
 }
 
 function autoResizeTextarea(textarea) {
@@ -379,7 +214,7 @@ function getActiveSession() {
 }
 
 function resolveSessionIdForEvent(eventLike) {
-  const directSessionId = eventLike?.extendedProps?.sessionId || eventLike?.groupId;
+  const directSessionId = eventLike?.extendedProps?.sessionId;
   if (directSessionId) {
     return directSessionId;
   }
@@ -403,7 +238,6 @@ function hydrateEventSessionLinks() {
     const color = getSessionColor(sessionId);
     return {
       ...eventRecord,
-      groupId: eventRecord.groupId || sessionId,
       backgroundColor: eventRecord.backgroundColor || color.bg,
       borderColor: eventRecord.borderColor || color.bg,
       textColor: eventRecord.textColor || "#ffffff",
@@ -522,7 +356,7 @@ function ensureSessionForSelection() {
     messages: [
       {
         role: "assistant",
-        text: `Selected range: ${formatSelectionLabel(state.selectedWindow)}. Describe the larger task you want to fit here.`,
+        text: `Got it — ${formatSelectionLabel(state.selectedWindow)}. What would you like to get done in this time?`,
       },
     ],
     draftTasks: [],
@@ -560,7 +394,7 @@ function syncCalendarEvents() {
   state.calendar.batchRendering(() => {
     state.calendar.removeAllEvents();
     state.events.forEach((eventRecord) => {
-      state.calendar.addEvent(eventRecord);
+      state.calendar.addEvent({ ...eventRecord, groupId: eventRecord.id });
     });
   });
 
@@ -820,8 +654,8 @@ function renderDraftList() {
   elements.applyDraftButton.disabled = !tasks.length;
 
   elements.draftSummaryText.textContent = tasks.length
-    ? `${tasks.length} draft events totaling ${formatDurationMinutes(totalMinutes)}. Review timing and clarity before you apply them.`
-    : "Check titles, notes, and timing before you apply the draft.";
+    ? `${tasks.length} tasks, ${formatDurationMinutes(totalMinutes)} total. Review before applying.`
+    : "Review each task's title, notes, and timing, then apply when ready.";
 
   elements.draftMetaChips.innerHTML = "";
   elements.draftMetaChips.classList.toggle("hidden", !tasks.length);
@@ -847,7 +681,7 @@ function renderDraftList() {
   if (!session || !tasks.length) {
     const empty = document.createElement("div");
     empty.className = "empty-card";
-    empty.textContent = "Send a prompt in Plan Mode to get an AI draft.";
+    empty.textContent = "Send a message in the Plan tab to generate a draft.";
     elements.draftList.appendChild(empty);
     return;
   }
@@ -866,7 +700,24 @@ function renderDraftList() {
 
     const notes = document.createElement("div");
     notes.className = "draft-card-notes";
-    notes.textContent = task.notes || "No notes";
+    const rawNotes = (task.notes || "").trim();
+    if (!rawNotes) {
+      notes.textContent = "No notes";
+    } else {
+      const bullets = rawNotes.split(/\s*-\s+/).filter(Boolean);
+      if (bullets.length > 1) {
+        const ul = document.createElement("ul");
+        ul.className = "draft-notes-list";
+        bullets.forEach((b) => {
+          const li = document.createElement("li");
+          li.textContent = b.trim();
+          ul.appendChild(li);
+        });
+        notes.appendChild(ul);
+      } else {
+        notes.textContent = rawNotes;
+      }
+    }
 
     const meta = document.createElement("div");
     meta.className = "draft-card-meta";
@@ -888,6 +739,10 @@ function renderDraftList() {
 }
 
 function renderCalendarEventContent(arg) {
+  if (arg.isMirror || arg.event.display === "background" || arg.event.display === "inverse-background") {
+    return null;
+  }
+
   const sessionColor = getSessionColor(resolveSessionIdForEvent(arg.event));
   const wrapper = document.createElement("div");
   wrapper.className = `fc-custom-event priority-${arg.event.extendedProps.priority || "medium"}${isOffHoursEvent(arg.event) ? " off-hours" : ""}`;
@@ -895,13 +750,24 @@ function renderCalendarEventContent(arg) {
   wrapper.style.setProperty("--session-soft", sessionColor.soft);
   wrapper.style.setProperty("--session-border", sessionColor.border);
   wrapper.style.setProperty("--session-text", sessionColor.text);
-  wrapper.title = `${arg.event.title || "Untitled"}\n${formatEventTimeLabel(arg.event)}`;
 
-  const titleNode = document.createElement("div");
-  titleNode.className = "fc-custom-event-title";
-  titleNode.textContent = arg.event.title || "Untitled";
+  const title = arg.event.title || "";
+  wrapper.title = `${title}\n${formatEventTimeLabel(arg.event)}`;
 
-  wrapper.appendChild(titleNode);
+  if (title) {
+    const titleNode = document.createElement("div");
+    titleNode.className = "fc-custom-event-title";
+    titleNode.textContent = title;
+    wrapper.appendChild(titleNode);
+  }
+
+  if (!arg.event.allDay && arg.event.start) {
+    const timeNode = document.createElement("div");
+    timeNode.className = "fc-custom-event-time";
+    timeNode.textContent = formatTimeOnly(arg.event.start);
+    wrapper.appendChild(timeNode);
+  }
+
   return { domNodes: [wrapper] };
 }
 
@@ -980,6 +846,14 @@ function applyDraftToCalendar() {
   persist();
   renderPlansDrawer();
   setModalOpen(false);
+
+  const placed = result.events.length;
+  const overflowed = result.overflow.length;
+  if (placed && !overflowed) {
+    showToast(`${placed} task${placed === 1 ? "" : "s"} added to calendar`);
+  } else if (placed && overflowed) {
+    showToast(`${placed} task${placed === 1 ? "" : "s"} added, ${overflowed} could not fit`);
+  }
 
   if (result.events[0]) {
     state.selectedEventId = result.events[0].id;

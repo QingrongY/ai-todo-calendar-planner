@@ -10,7 +10,7 @@ const STATIC_ROOT = join(__dirname, "public");
 const PORT = Number(process.env.PORT || 4321);
 const AIMLAPI_KEY = process.env.AIMLAPI_KEY || "";
 const AIMLAPI_BASE_URL = process.env.AIMLAPI_BASE_URL || "https://api.aimlapi.com/v1";
-const AIMLAPI_MODEL = process.env.AIMLAPI_MODEL || "openai/gpt-4.1-nano-2025-04-14";
+const AIMLAPI_MODEL = process.env.AIMLAPI_MODEL || "openai/gpt-4.1-2025-04-14";
 const AIMLAPI_STT_MODEL = process.env.AIMLAPI_STT_MODEL || "openai/gpt-4o-mini-transcribe";
 const MAX_BODY_BYTES = 20_000_000;
 
@@ -48,49 +48,138 @@ async function readRequestBody(request) {
   });
 }
 
-function buildUserPrompt(payload) {
+function getSystemPrompt() {
   return [
-    "The app uses a calendar as the primary surface. The user selects a time window, then asks AI to break a larger goal into tasks that fit inside it.",
-    "Users want a real draft plan, not repeated permission-seeking questions.",
-    "The calendar and task edits belong to the user. Treat them as authoritative local state.",
-    "Infer intent from conversation, task edits, and schedule settings.",
+    "# Role",
+    "You are AI-ToDo, an expert planning assistant. The user selects a time window on a calendar, describes a goal, and you produce a smart, specific, actionable draft plan that fits inside that window.",
     "",
-    JSON.stringify(
-      {
-        mode: payload.mode || "chat",
-        latest_user_message: payload.latestUserMessage || "",
-        messages: payload.messages || [],
-        current_plan: payload.currentPlan || null,
-        recent_task_edits: payload.recentTaskEdits || [],
-        schedule_settings: payload.scheduleSettings || null,
-      },
-      null,
-      2,
-    ),
+    "# Core Principles",
+    "- AI drafts, user decides. You propose; the user reviews and applies.",
+    "- Calendar edits belong to the user. Treat them as authoritative local state.",
+    "- Bias toward action: produce a useful draft immediately. Do not ask for permission to begin.",
+    "- Ask at most one short clarification only when you are truly blocked from producing any usable draft.",
     "",
-    "Behavior requirements:",
-    "1. Mirror the user's primary language when it is obvious from the conversation.",
-    "2. Keep assistant replies short, calm, and useful. Usually 1 to 3 sentences.",
-    "3. Default to producing a useful draft plan immediately. Do not ask for permission to begin.",
-    "4. Ask at most one short clarification question only if you are truly blocked from producing a usable draft.",
-    "5. Maintain a single evolving task plan instead of multiple plan options.",
-    "6. Break real goals into 4 to 8 smaller tasks whenever possible.",
-    "7. For study or exam planning, include coverage, active recall, practice, and review instead of vague generic tasks.",
-    "8. Every task must have a priority, estimateMinutes, and a reasonable bucket.",
-    "9. If schedule_settings.selectionWindow exists, make the plan fit that selected window as closely as possible.",
-    "10. If schedule_settings.selectionSegments exists, use those segments as the primary placement boundary and distribute tasks across them intelligently.",
-    "11. You must decide the date allocation for tasks yourself. Do not leave all tasks on the first date unless there is a clear reason.",
-    "12. If the selection spans multiple dates or multiple usable segments, spread the work across those dates instead of concentrating everything into the first slot.",
-    "13. Avoid assigning multiple tasks to the same exact start time unless overlap is truly intended.",
-    "14. If the selected window is timed, assign targetDate and targetStartMinutes for each task so the frontend can place them directly from your judgment.",
-    "15. If the selected window is all-day across multiple dates, assign targetDate for every task within that range and set targetStartMinutes when a specific time-of-day helps the schedule.",
-    "16. If a task already has a chosen targetDate or targetStartMinutes from the user, preserve it unless the latest user message explicitly asks to move it.",
-    "17. When a current plan already exists, prefer minimal edits that respond to the latest user message instead of regenerating the whole plan.",
-    "18. Treat recent_task_edits as user-owned truth. Do not overwrite them unless the latest user message clearly asks for that change.",
-    "19. The AI only acts when the user sends a message. Manual calendar edits are not requests for automatic replanning.",
-    "20. For sync mode, assistantReply should usually be an empty string unless a short visible note is truly needed.",
-    "21. Do not mention chain-of-thought, hidden reasoning, or backend-only logic.",
+    "# Language & Tone",
+    "- Mirror the user's primary language when it is obvious from the conversation.",
+    "- Keep replies short, calm, and useful — usually 1 to 3 sentences.",
+    "- Never mention chain-of-thought, hidden reasoning, or backend-only logic.",
+    "",
+    "# What Makes a GOOD Plan (critical)",
+    "Your #1 job is to produce tasks that are specific enough to act on immediately. Apply these rules strictly:",
+    "",
+    "## Task titles must be concrete actions, not vague categories",
+    "BAD:  'Prepare slides' — too vague, what slides? about what?",
+    "GOOD: 'Draft 8-slide deck covering intro, methodology, results, demo, and Q&A'",
+    "BAD:  'Study chapter 3' — what specifically?",
+    "GOOD: 'Read ch.3 sections 3.1-3.4, take notes on key theorems'",
+    "BAD:  'Practice presentation'",
+    "GOOD: 'Rehearse full 15-min talk aloud, time each section, note weak transitions'",
+    "",
+    "## Notes must contain the specific HOW or checklist",
+    "Every task's notes field must include at least one of:",
+    "- A concrete checklist of sub-steps (2-4 bullet points)",
+    "- Specific deliverables or success criteria",
+    "- Key things to focus on or watch out for",
+    "NEVER leave notes empty or write generic filler like 'work on this task'.",
+    "",
+    "## Think about logical ordering and dependencies",
+    "- Research/gathering tasks come before creation tasks.",
+    "- Creation tasks come before review/polish tasks.",
+    "- Practice/rehearsal tasks come near the end.",
+    "- Leave buffer time between related tasks — don't schedule back-to-back for 8 hours straight.",
+    "",
+    "## Time estimates must be realistic",
+    "- Writing a slide deck: 60-120min, not 30min.",
+    "- Rehearsing a presentation: 45-60min minimum.",
+    "- Reading + note-taking for a chapter: 60-90min.",
+    "- Quick review or editing pass: 20-30min.",
+    "- Don't schedule a 4-hour marathon block. Break it up.",
+    "",
+    "## Domain-specific intelligence",
+    "- For PRESENTATIONS: include slide structure, rehearsal with timing, and a Q&A prep task.",
+    "- For EXAMS: include active recall, practice problems, and spaced review — not just 'read chapter X'.",
+    "- For PROJECTS: include a planning/outline step, core work blocks, testing/review, and a final polish step.",
+    "- For WRITING: include outline, first draft, revision, and proofreading as separate tasks.",
+    "",
+    "# Scheduling Rules",
+    "",
+    "## Using the FULL time window",
+    "The user chose a specific time window for a reason. You MUST distribute tasks across the ENTIRE window, not just the first half.",
+    "- Read schedule_settings.readable_summary carefully — it tells you exactly how many hours are available each day.",
+    "- Add up your total estimateMinutes. If the total is much less than the available time, you're under-scheduling — add more tasks or give existing tasks more realistic (longer) time estimates.",
+    "- Use the full range: if the window is 8am-8pm, schedule tasks from morning through evening, not just 9am-4pm.",
+    "",
+    "## Time allocation",
+    "- For timed windows: assign both targetDate and targetStartMinutes for every task.",
+    "- For all-day multi-date windows: assign targetDate for every task; add targetStartMinutes when a specific time-of-day helps.",
+    "- Spread work across available dates/segments. Never pile everything on the first date unless the window is a single short slot.",
+    "- Avoid assigning multiple tasks to the same exact start time.",
+    "",
+    "## Energy management and breaks",
+    "- Place cognitively demanding work (writing, deep thinking, coding) in the morning or early afternoon when focus is highest.",
+    "- Place lighter work (review, practice, organizing) in the late afternoon.",
+    "- After every 90-120 minutes of focused work, leave a 15-30 minute gap before the next task. Do NOT fill every minute — humans need breaks.",
+    "- For a full day (8+ hours available): plan roughly 5-6 hours of actual task time, leaving the rest as natural buffer and breaks.",
+    "- For a half day (4 hours available): plan roughly 3-3.5 hours of actual task time.",
+    "- The gaps between tasks ARE the breaks. You don't need to create 'break' tasks — just leave space between scheduled tasks.",
+    "",
+    "# Respecting User Edits",
+    "- Preserve user-chosen targetDate or targetStartMinutes unless the latest message explicitly asks to move them.",
+    "- When a current_plan exists, prefer minimal edits responding to the latest message instead of regenerating the whole plan.",
+    "- Treat recent_task_edits as user-owned truth. Do not overwrite them unless the latest message clearly asks for that change.",
+    "- The AI only acts when the user sends a message. Manual calendar edits are not requests for automatic replanning.",
+    "",
+    "# Output Notes",
+    "- For sync mode, assistantReply should usually be empty unless a short visible note is truly needed.",
+    "- Maintain a single evolving plan. Do not offer multiple plan options.",
+    "- Generate 4-8 tasks per plan.",
   ].join("\n");
+}
+
+function formatMinutesAsTime(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return m === 0 ? `${h12}:00 ${period}` : `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+function buildReadableSummary(settings) {
+  if (!settings?.selectionSegments?.length) {
+    return null;
+  }
+  const lines = [];
+  let totalAvailable = 0;
+  for (const seg of settings.selectionSegments) {
+    const hours = ((seg.endMinutes - seg.startMinutes) / 60).toFixed(1);
+    totalAvailable += seg.endMinutes - seg.startMinutes;
+    lines.push(`${seg.dateKey}: ${formatMinutesAsTime(seg.startMinutes)} to ${formatMinutesAsTime(seg.endMinutes)} (${hours}h available)`);
+  }
+  const totalHours = (totalAvailable / 60).toFixed(1);
+  lines.push(`Total available: ${totalHours} hours across ${settings.selectionSegments.length} day(s)`);
+  lines.push(`Aim to schedule roughly 60-75% of available time as tasks, leaving the rest as breaks.`);
+  return lines.join("\n");
+}
+
+function buildUserPrompt(payload) {
+  const scheduleSettings = payload.scheduleSettings || null;
+  const readableSummary = buildReadableSummary(scheduleSettings);
+
+  return JSON.stringify(
+    {
+      mode: payload.mode || "chat",
+      latest_user_message: payload.latestUserMessage || "",
+      messages: payload.messages || [],
+      current_plan: payload.currentPlan || null,
+      recent_task_edits: payload.recentTaskEdits || [],
+      schedule_settings: {
+        ...scheduleSettings,
+        readable_summary: readableSummary,
+      },
+    },
+    null,
+    2,
+  );
 }
 
 function getPlannerSchema() {
@@ -98,13 +187,22 @@ function getPlannerSchema() {
     type: "object",
     additionalProperties: false,
     properties: {
-      assistantReply: { type: "string" },
+      assistantReply: {
+        type: "string",
+        description: "Short reply to the user (1-3 sentences). Empty string for sync mode.",
+      },
       stage: {
         type: "string",
         enum: ["clarifying", "drafting", "ready", "refining"],
       },
-      planTitle: { type: "string" },
-      planSummary: { type: "string" },
+      planTitle: {
+        type: "string",
+        description: "A concise title for this plan, e.g. 'HCAI Final Presentation Prep'.",
+      },
+      planSummary: {
+        type: "string",
+        description: "One sentence summarizing the overall strategy.",
+      },
       nextStepHint: { type: "string" },
       editAcknowledgement: { type: "string" },
       tasks: {
@@ -115,8 +213,14 @@ function getPlannerSchema() {
           type: "object",
           additionalProperties: false,
           properties: {
-            text: { type: "string" },
-            notes: { type: "string" },
+            text: {
+              type: "string",
+              description: "A specific, actionable task title starting with a verb. Include concrete scope, e.g. 'Draft 8-slide deck covering intro, methods, demo, and Q&A' not just 'Make slides'.",
+            },
+            notes: {
+              type: "string",
+              description: "2-4 bullet points as sub-steps or success criteria. NEVER empty. Use ' - ' as bullet separator. Example: ' - Outline key points for each slide - Include one diagram per technical section - Keep text under 6 lines per slide'.",
+            },
             done: { type: "boolean" },
             source: { type: "string" },
             bucket: {
@@ -131,8 +235,12 @@ function getPlannerSchema() {
               type: "integer",
               minimum: 10,
               maximum: 240,
+              description: "Realistic time estimate. Writing a deck: 60-120min. Rehearsal: 45-60min. Quick review: 20-30min.",
             },
-            targetDate: { type: "string" },
+            targetDate: {
+              type: "string",
+              description: "ISO date string YYYY-MM-DD within the selection window.",
+            },
             targetStartMinutes: {
               anyOf: [
                 {
@@ -142,6 +250,7 @@ function getPlannerSchema() {
                 },
                 { type: "null" },
               ],
+              description: "Minutes from midnight for the start time. 540=9:00, 600=10:00, 780=13:00. Place demanding work earlier, lighter work later.",
             },
           },
           required: [
@@ -183,8 +292,8 @@ async function callAIMLAPI(payload) {
     },
     body: JSON.stringify({
       model: AIMLAPI_MODEL,
-      temperature: 0.3,
-      max_tokens: 1200,
+      max_tokens: 3200,
+      temperature: 0.4,
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -196,8 +305,7 @@ async function callAIMLAPI(payload) {
       messages: [
         {
           role: "system",
-          content:
-            "You are AI-ToDo, a voice-first planning assistant that turns messy goals into editable, calendar-aware task plans.",
+          content: getSystemPrompt(),
         },
         {
           role: "user",

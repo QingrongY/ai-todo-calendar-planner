@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI-ToDo</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230d9488'/%3E%3Cpath d='M18 32l8 8 20-20' fill='none' stroke='white' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles/main.css?v=28">
+  <link rel="stylesheet" href="/styles/main.css?v=31">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js"></script>
 </head>
 <body>
@@ -27,30 +27,30 @@
     <section class="calendar-shell">
       <section id="emptyGuide" class="empty-guide hidden" aria-live="polite">
         <div class="empty-guide-copy">
-          <div class="empty-guide-label">Desktop demo flow</div>
-          <h2>Start with a calendar range, then let AI turn it into a draft you can review before anything lands on the schedule.</h2>
-          <p class="muted-text">This demo works best when the calendar stays readable. Select a window, send one clear prompt, then check the proposed titles, notes, and timing before you apply the plan.</p>
+          <div class="empty-guide-label">How it works</div>
+          <h2>Pick a time window on the calendar, tell AI what you want to accomplish, and review the plan before it goes live.</h2>
+          <p class="muted-text">Select a range, describe your goal in one sentence, then check the draft tasks for timing and clarity before you apply them.</p>
         </div>
         <div class="empty-guide-steps" aria-label="Getting started steps">
           <div class="empty-guide-step">
             <div class="empty-guide-step-number">1</div>
             <div>
-              <strong>Select a time range</strong>
-              <p class="muted-text">Drag across the calendar to choose the window you want the plan to fit.</p>
+              <strong>Select a time window</strong>
+              <p class="muted-text">Click and drag on the calendar to mark the hours or days you have available.</p>
             </div>
           </div>
           <div class="empty-guide-step">
             <div class="empty-guide-step-number">2</div>
             <div>
-              <strong>Describe the bigger goal</strong>
-              <p class="muted-text">Ask for concrete tasks with realistic wording and readable titles.</p>
+              <strong>Describe your goal</strong>
+              <p class="muted-text">Tell AI what you want to get done — it will break it into concrete tasks.</p>
             </div>
           </div>
           <div class="empty-guide-step">
             <div class="empty-guide-step-number">3</div>
             <div>
-              <strong>Review the draft before apply</strong>
-              <p class="muted-text">Check timing, clarity, and visual density before placing tasks on the calendar.</p>
+              <strong>Review and apply</strong>
+              <p class="muted-text">Check each task's title, timing, and priority, then apply to your calendar.</p>
             </div>
           </div>
         </div>
@@ -105,8 +105,8 @@
       </div>
 
       <div class="mode-tabs">
-        <button id="planModeButton" type="button" class="mode-tab active">Plan Mode</button>
-        <button id="executeModeButton" type="button" class="mode-tab">Execution Mode</button>
+        <button id="planModeButton" type="button" class="mode-tab active">Plan</button>
+        <button id="executeModeButton" type="button" class="mode-tab">Review &amp; Apply</button>
       </div>
 
       <section id="planModePanel" class="mode-panel">
@@ -117,7 +117,7 @@
         <form id="modalComposerForm" class="modal-composer">
           <div class="composer-row">
             <button id="modalMicButton" type="button" class="subtle-button">Mic</button>
-            <textarea id="modalComposerInput" rows="1" placeholder="Describe the big task you want to fit into this selected range..."></textarea>
+            <textarea id="modalComposerInput" rows="1" placeholder="What do you want to accomplish in this time?"></textarea>
             <button id="modalSendButton" type="submit" class="primary-button">Send</button>
           </div>
           <div id="modalStatus" class="modal-status hidden" aria-live="polite"></div>
@@ -127,9 +127,9 @@
       <section id="executeModePanel" class="mode-panel hidden">
         <div class="draft-header">
           <div class="draft-header-copy">
-            <div class="draft-header-label">Execution step</div>
-            <h3>Review draft events before they touch the calendar</h3>
-            <p id="draftSummaryText" class="muted-text">Check titles, notes, and timing before you apply the draft.</p>
+            <div class="draft-header-label">Draft review</div>
+            <h3>Check the plan before it goes on your calendar</h3>
+            <p id="draftSummaryText" class="muted-text">Review each task's title, notes, and timing, then apply when ready.</p>
           </div>
           <div class="draft-header-actions">
             <div id="draftMetaChips" class="draft-meta-chips hidden"></div>
@@ -141,6 +141,8 @@
     </section>
   </div>
 
-  <script type="module" src="/app/main.js?v=28"></script>
+  <div id="toast" class="toast hidden" aria-live="polite"></div>
+
+  <script type="module" src="/app/main.js?v=31"></script>
 </body>
 </html>
